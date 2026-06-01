@@ -23,7 +23,7 @@ zip -r -1 "$ENGINE_ZIP" "AI Trading Bot" \
   -x "AI Trading Bot/.venv/*" -x "AI Trading Bot/.venv-fresh/*" -x "AI Trading Bot/venv/*" \
   -x "AI Trading Bot/node_modules/*" \
   -x "*/__pycache__/*" -x "*.pyc" \
-  -x "AI Trading Bot/.env" -x "AI Trading Bot/.env.*" \
+  -x "AI Trading Bot/.env" -x "AI Trading Bot/.env.*" -x "*/.env" -x "*/.env.*" \
   -x "*.key" -x "*.pem" -x "*secrets*.json" \
   -x "AI Trading Bot/data/training/*" \
   -x "AI Trading Bot/data/*.parquet" \
@@ -39,8 +39,11 @@ zip -r -1 "$ENGINE_ZIP" "AI Trading Bot" \
 
 # 2. SECRET-LEAK GATE — abort if anything secret-like is in the archive ------------
 echo "=== [2/5] secret-leak gate ==="
-if unzip -l "$ENGINE_ZIP" | grep -iE '(/\.env($|\.))|secret|\.key$|\.pem$' ; then
-  echo "ABORT: secret-like file found in engine zip (see above)."; exit 1
+# Match actual secret-bearing files only (NOT source named *secret*, e.g. secret_manager_utils.py).
+if unzip -l "$ENGINE_ZIP" \
+   | grep -iE '/\.env(\.|$)|/[^/ ]*\.env$|\.pem$|\.key$|\.p12$|\.pfx$|/id_rsa$|/credentials\.json$|/service[_-]account[^/]*\.json$|/secrets?\.(json|ya?ml)$|/[^/]*_secret\.(json|txt|ya?ml)$' \
+   | grep -vE '\.example$' ; then
+  echo "ABORT: secret-bearing file found in engine zip (see above)."; exit 1
 fi
 echo "ok: no secrets in engine archive"
 
@@ -52,11 +55,13 @@ GUI_ZIP="$DIST/aaagents-gui.zip"
 # 4. Split engine zip into < 2 GB parts (bootstrap rejoins via copy /b) ------------
 echo "=== [4/5] splitting + checksums ==="
 ESIZE=$(stat -c%s "$ENGINE_ZIP")
+echo "  hashing full engine zip ($((ESIZE/1024/1024)) MB) ..."
+FULLHASH=$(sha256sum "$ENGINE_ZIP" | awk '{print $1}')
 cd "$DIST"
 if [ "$ESIZE" -gt "$PART_BYTES" ]; then
   split -b "$PART_BYTES" -d -a 2 "$ENGINE_ZIP" "aaagents-engine.zip.part-"
   rm -f "$ENGINE_ZIP"
-  sha256sum aaagents-engine.zip.part-* aaagents-gui.zip > SHA256SUMS.txt
+  { sha256sum aaagents-engine.zip.part-* aaagents-gui.zip; echo "$FULLHASH  aaagents-engine.zip"; } > SHA256SUMS.txt
   UP=(aaagents-engine.zip.part-* aaagents-gui.zip SHA256SUMS.txt)
 else
   sha256sum aaagents-engine.zip aaagents-gui.zip > SHA256SUMS.txt
@@ -67,8 +72,15 @@ ls -lh "${UP[@]}"
 # 5. Create + upload the release --------------------------------------------------
 echo "=== [5/5] uploading release $TAG to $REPO ==="
 unset GH_TOKEN
-gh release view "$TAG" -R "$REPO" >/dev/null 2>&1 || \
+if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+  # Clear stale engine-part assets first (the part count can shrink between builds,
+  # which would otherwise leave an orphan part that corrupts the rejoin).
+  for a in $(gh release view "$TAG" -R "$REPO" --json assets -q '.assets[].name' 2>/dev/null | grep -E '^aaagents-engine\.zip'); do
+    echo "  removing stale asset: $a"; gh release delete-asset "$TAG" "$a" -R "$REPO" -y 2>/dev/null || true
+  done
+else
   gh release create "$TAG" -R "$REPO" -t "AAAgents desktop $TAG" \
     -n "Full no-Docker engine + trained models + desktop GUI (private). Run bootstrap.ps1."
+fi
 gh release upload "$TAG" -R "$REPO" "${UP[@]}" --clobber
 echo "=== DONE: https://github.com/$REPO/releases/tag/$TAG ==="

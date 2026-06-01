@@ -50,7 +50,7 @@ try {
 # 2. Download the release assets -------------------------------------------
 $dl = Join-Path $InstallDir "dl"
 New-Item -ItemType Directory -Force -Path $dl | Out-Null
-Info "Downloading release $Tag from $Repo (this is large - ~6 GB; resumable) ..."
+Info "Downloading release $Tag from $Repo (this is large - ~6 GB; do not interrupt) ..."
 & gh release download $Tag -R $Repo -D $dl --clobber
 if ($LASTEXITCODE -ne 0) { Die "Release download failed. Confirm the release '$Tag' exists and you can read $Repo." }
 Ok "assets downloaded to $dl"
@@ -76,20 +76,43 @@ $app = Join-Path $InstallDir "app"
 if (Test-Path $app) { Remove-Item -Recurse -Force $app }
 New-Item -ItemType Directory -Force -Path $app | Out-Null
 
-# Join any split engine parts (engine.zip.part-aa, -ab, ...) back into one zip.
+# Join any split engine parts (part-00, part-01, ...) back into one zip, in order.
 $parts = Get-ChildItem $dl -Filter "aaagents-engine.zip.part-*" | Sort-Object Name
+$engineZip = Join-Path $dl "aaagents-engine.zip"
 if ($parts) {
-  $engineZip = Join-Path $dl "aaagents-engine.zip"
+  Remove-Item $engineZip -ErrorAction SilentlyContinue
   Info "Reassembling $($parts.Count) engine parts ..."
   cmd /c "copy /b `"$(( $parts | ForEach-Object { $_.FullName }) -join '`"+`"')`" `"$engineZip`"" | Out-Null
-} else {
-  $engineZip = Join-Path $dl "aaagents-engine.zip"
+}
+if (-not (Test-Path $engineZip)) { Die "Engine archive missing after reassembly." }
+
+# Verify the reassembled archive against the full-zip hash in the manifest.
+if (Test-Path $manifest) {
+  $full = Get-Content $manifest | Where-Object { $_ -match 'aaagents-engine\.zip\s*$' } | Select-Object -First 1
+  if ($full -and $full -match '^\s*([0-9a-fA-F]{64})') {
+    $want = $matches[1].ToLower()
+    Info "Verifying reassembled engine archive ..."
+    if ((Get-FileHash $engineZip -Algorithm SHA256).Hash.ToLower() -ne $want) {
+      Die "Reassembled engine.zip checksum mismatch - re-run to re-download."
+    }
+    Ok "engine archive verified"
+  }
 }
 
+# Extract with the in-box bsdtar (ZIP64-safe, streams). Windows PowerShell 5.1's
+# Expand-Archive (Microsoft.PowerShell.Archive v1.0.1.0) corrupts/OOMs on a >4 GB
+# ZIP64 archive like this one, so it is NOT used here.
+$tar = Join-Path $env:WINDIR "System32\tar.exe"
+if (-not (Test-Path $tar)) { $tar = "tar" }
 Info "Extracting engine + models (~6 GB - takes a minute) ..."
-Expand-Archive -Path $engineZip -DestinationPath $app -Force
+& $tar -xf "$engineZip" -C "$app"
+if ($LASTEXITCODE -ne 0) { Die "Extraction failed (need Windows 10/11 in-box tar.exe at System32)." }
 $guiZip = Join-Path $dl "aaagents-gui.zip"
-if (Test-Path $guiZip) { Expand-Archive -Path $guiZip -DestinationPath (Join-Path $app "gui") -Force }
+if (Test-Path $guiZip) {
+  $guiDir = Join-Path $app "gui"
+  New-Item -ItemType Directory -Force -Path $guiDir | Out-Null
+  & $tar -xf "$guiZip" -C "$guiDir"
+}
 Ok "extracted to $app"
 
 # 4. Python venv + dependencies --------------------------------------------

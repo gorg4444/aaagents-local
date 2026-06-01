@@ -14,7 +14,8 @@ On the target PC, install [GitHub CLI](https://cli.github.com) once and run
 & ([scriptblock]::Create((gh api -H "Accept: application/vnd.github.raw" /repos/gorg4444/aaagents-local/contents/bootstrap.ps1)))
 ```
 
-(or `gh repo clone gorg4444/aaagents-local; .\aaagents-local\bootstrap.ps1`)
+(or clone + run: `gh repo clone gorg4444/aaagents-local`, then
+`powershell -ExecutionPolicy Bypass -File .\aaagents-local\bootstrap.ps1`)
 
 It downloads the release (~6 GB), reassembles + extracts it, sets up a Python
 venv with `requirements.oss.txt`, and **launches the desktop app** — which spawns
