@@ -45,6 +45,8 @@ tar -cf "$ENGINE_TAR" -C "$SRC_ENGINE_PARENT" \
   --exclude='AI Trading Bot/scripts/setup_monitoring.sh' \
   --exclude='AI Trading Bot/scripts/backup_to_gcs.sh' \
   --exclude='AI Trading Bot/scripts/upload_models_to_gcs.sh' \
+  --exclude='AI Trading Bot/tests/integration/test_infra_cloudbuild.py' \
+  --exclude='AI Trading Bot/tests/unit/test_dockerfile_torch_versions.py' \
   "AI Trading Bot"
 
 # 2. SECRET-LEAK GATE — abort if any secret-bearing file is in the archive ---------
