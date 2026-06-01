@@ -51,6 +51,16 @@ echo "=== [3/5] archiving GUI (win-unpacked) ==="
 GUI_TAR="$DIST/aaagents-gui.tar"
 tar -cf "$GUI_TAR" -C "$SRC_GUI_PARENT" "win-unpacked"
 
+# 3b. Bundled relocatable Python (interpreter + all deps) — only if prebuilt.
+# Build it once with: download python-build-standalone -> dist/python-bundle/python,
+# then `python.exe -m pip install -r requirements.oss.txt` into it. Rarely changes.
+PY_PRESENT=0
+if [ -d "$DIST/python-bundle/python" ]; then
+  echo "=== [3b] archiving bundled Python ==="
+  tar -cf "$DIST/aaagents-python.tar" -C "$DIST/python-bundle" python
+  PY_PRESENT=1
+fi
+
 # 4. Split + checksums ------------------------------------------------------------
 echo "=== [4/5] splitting + checksums ==="
 ESIZE=$(stat -c%s "$ENGINE_TAR")
@@ -66,6 +76,22 @@ else
   sha256sum aaagents-engine.tar aaagents-gui.tar > SHA256SUMS.txt
   UP=(aaagents-engine.tar aaagents-gui.tar SHA256SUMS.txt)
 fi
+# Fold in the bundled Python (single file, or split if it ever exceeds the limit).
+if [ "$PY_PRESENT" = "1" ]; then
+  PSIZE=$(stat -c%s aaagents-python.tar); PHASH=$(sha256sum aaagents-python.tar | awk '{print $1}')
+  rm -f aaagents-python.tar.part-*
+  UP=("${UP[@]:0:${#UP[@]}-1}")  # drop trailing SHA256SUMS.txt; re-added below
+  if [ "$PSIZE" -gt "$PART_BYTES" ]; then
+    split -b "$PART_BYTES" -d -a 2 aaagents-python.tar aaagents-python.tar.part-
+    rm -f aaagents-python.tar
+    { sha256sum aaagents-python.tar.part-*; echo "$PHASH  aaagents-python.tar"; } >> SHA256SUMS.txt
+    UP+=(aaagents-python.tar.part-*)
+  else
+    sha256sum aaagents-python.tar >> SHA256SUMS.txt
+    UP+=(aaagents-python.tar)
+  fi
+  UP+=(SHA256SUMS.txt)
+fi
 ls -lh "${UP[@]}"
 
 # 5. Create + upload --------------------------------------------------------------
@@ -73,7 +99,7 @@ echo "=== [5/5] uploading release $TAG to $REPO ==="
 unset GH_TOKEN
 if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
   # Clear stale engine assets first (part count can shrink between builds).
-  for a in $(gh release view "$TAG" -R "$REPO" --json assets -q '.assets[].name' 2>/dev/null | grep -E '^aaagents-engine\.(tar|zip)'); do
+  for a in $(gh release view "$TAG" -R "$REPO" --json assets -q '.assets[].name' 2>/dev/null | grep -E '^aaagents-(engine|python)\.(tar|zip)'); do
     echo "  removing stale asset: $a"; gh release delete-asset "$TAG" "$a" -R "$REPO" -y 2>/dev/null || true
   done
 else

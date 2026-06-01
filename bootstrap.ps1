@@ -120,20 +120,42 @@ $botDir = Join-Path $app "AI Trading Bot"
 if (-not (Test-Path (Join-Path $botDir "requirements.oss.txt"))) {
   Die "Bundle layout unexpected: $botDir\requirements.oss.txt not found."
 }
-$venv = Join-Path $InstallDir "venv"
-$vpy  = Join-Path $venv "Scripts\python.exe"
 $engineReady = $false
-if (Get-Command python -ErrorAction SilentlyContinue) {
-  if (-not (Test-Path $vpy)) { Info "Creating venv ..."; & python -m venv $venv }
-  if (Test-Path $vpy) {
-    Info "Installing dependencies (requirements.oss.txt) - a few minutes ..."
-    & $vpy -m pip install --upgrade pip | Out-Null
-    & $vpy -m pip install -r (Join-Path $botDir "requirements.oss.txt")
-    if ($LASTEXITCODE -eq 0) { Ok "dependencies installed"; $engineReady = $true }
-    else { Warn "Dependency install hit errors - the app still opens; the engine starts once resolved." }
+$vpy = $null
+
+# 4a. Preferred: the BUNDLED relocatable Python (interpreter + all deps) — no
+#     system Python required, no pip wait.
+$pyParts = Get-ChildItem $dl -Filter "aaagents-python.tar.part-*" -ErrorAction SilentlyContinue | Sort-Object Name
+$pyTar = Join-Path $dl "aaagents-python.tar"
+if ($pyParts) {
+  Remove-Item $pyTar -ErrorAction SilentlyContinue
+  cmd /c "copy /b `"$(( $pyParts | ForEach-Object { $_.FullName }) -join '`"+`"')`" `"$pyTar`"" | Out-Null
+}
+if (Test-Path $pyTar) {
+  Info "Extracting bundled Python (no system Python required) ..."
+  $pyRoot = Join-Path $InstallDir "python"
+  if (Test-Path $pyRoot) { Remove-Item -Recurse -Force $pyRoot }
+  & $tar -xf "$pyTar" -C $InstallDir
+  $cand = Join-Path $InstallDir "python\python.exe"
+  if (Test-Path $cand) { $vpy = $cand; $engineReady = $true; Ok "bundled Python ready (deps included)" }
+}
+
+# 4b. Fallback: system Python + venv (only if no bundled Python shipped).
+if (-not $vpy) {
+  $venv = Join-Path $InstallDir "venv"
+  $svpy = Join-Path $venv "Scripts\python.exe"
+  if (Get-Command python -ErrorAction SilentlyContinue) {
+    if (-not (Test-Path $svpy)) { Info "Creating venv ..."; & python -m venv $venv }
+    if (Test-Path $svpy) {
+      Info "Installing dependencies (requirements.oss.txt) - a few minutes ..."
+      & $svpy -m pip install --upgrade pip | Out-Null
+      & $svpy -m pip install -r (Join-Path $botDir "requirements.oss.txt")
+      if ($LASTEXITCODE -eq 0) { Ok "dependencies installed"; $vpy = $svpy; $engineReady = $true }
+      else { Warn "Dependency install hit errors - the app still opens; the engine starts once resolved." }
+    }
+  } else {
+    Warn "No bundled Python and Python 3.12+ not found - the app opens; install Python for the engine."
   }
-} else {
-  Warn "Python 3.12+ not found - the app still opens; install Python so the engine can start."
 }
 
 # 5. Launch the desktop GUI (it spawns the no-Docker engine) ----------------
@@ -141,7 +163,7 @@ if (Get-Command python -ErrorAction SilentlyContinue) {
 # adopts the engine once it is running.
 $exe = Get-ChildItem (Join-Path $app "gui") -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue |
        Where-Object { $_.Name -notmatch "unins|crash|setup" } | Select-Object -First 1
-if (Test-Path $vpy) { $env:AAA_PYTHON = $vpy }  # GUI spawns the engine with THIS interpreter
+if ($vpy -and (Test-Path $vpy)) { $env:AAA_PYTHON = $vpy }  # GUI spawns the engine with THIS interpreter
 $env:AAA_SOURCE_ROOT = $app                      # ... from <app>\AI Trading Bot (native-engine-manager.cjs)
 $env:AAA_ENGINE_PORT = "$Port"
 $env:AAA_DEMO_BOOT   = "true"                     # dashboard boots before keys are set (paper, never trades)
