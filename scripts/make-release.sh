@@ -1,81 +1,79 @@
 #!/usr/bin/env bash
 # Build + upload the AAAgents desktop release (engine + trained models + GUI) to the
-# private repo. Runs on a machine with the source trees. EXCLUDES all secrets and
-# runtime cruft, and aborts if any secret-like file slips into the archive.
+# private repo. Uses GNU tar (zip is not available here; tar handles large files
+# natively and the bootstrap extracts with the in-box bsdtar). EXCLUDES all secrets
+# and runtime cruft, and ABORTS if any secret-bearing file slips into the archive.
 set -euo pipefail
 
 REPO="gorg4444/aaagents-local"
 TAG="${1:-v1}"
-SRC_ENGINE_PARENT="/c/Users/gapel/aaagents-app"            # contains "AI Trading Bot"
-SRC_GUI_PARENT="/c/Users/gapel/aaagents-app-gui-test/release"   # contains "win-unpacked"
+SRC_ENGINE_PARENT="/c/Users/gapel/aaagents-app"               # contains "AI Trading Bot"
+SRC_GUI_PARENT="/c/Users/gapel/aaagents-app-gui-test/release" # contains "win-unpacked"
 DIST="/c/Users/gapel/aaagents-local-repo/dist"
 PART_BYTES=1900000000   # < 2 GB GitHub per-asset limit
 
 mkdir -p "$DIST"
-rm -f "$DIST"/aaagents-engine.zip "$DIST"/aaagents-engine.zip.part-* "$DIST"/aaagents-gui.zip "$DIST"/SHA256SUMS.txt
+rm -f "$DIST"/aaagents-engine.tar "$DIST"/aaagents-engine.tar.part-* "$DIST"/aaagents-gui.tar "$DIST"/SHA256SUMS.txt
 
-# 1. Engine + models zip (store-only: models barely compress; speed over ratio) ----
-echo "=== [1/5] zipping engine + models (this is the long part) ==="
-cd "$SRC_ENGINE_PARENT"
-ENGINE_ZIP="$DIST/aaagents-engine.zip"
-zip -r -1 "$ENGINE_ZIP" "AI Trading Bot" \
-  -x "AI Trading Bot/.git/*" \
-  -x "AI Trading Bot/.venv/*" -x "AI Trading Bot/.venv-fresh/*" -x "AI Trading Bot/venv/*" \
-  -x "AI Trading Bot/node_modules/*" \
-  -x "*/__pycache__/*" -x "*.pyc" \
-  -x "AI Trading Bot/.env" -x "AI Trading Bot/.env.*" -x "*/.env" -x "*/.env.*" \
-  -x "*.key" -x "*.pem" -x "*secrets*.json" \
-  -x "AI Trading Bot/data/training/*" \
-  -x "AI Trading Bot/data/*.parquet" \
-  -x "AI Trading Bot/data/*.db" -x "AI Trading Bot/data/*.db-wal" -x "AI Trading Bot/data/*.db-shm" \
-  -x "AI Trading Bot/data/audit_chain.jsonl" \
-  -x "AI Trading Bot/cloud_fallback_logs/*" \
-  -x "AI Trading Bot/lightning_logs/*" \
-  -x "AI Trading Bot/market_data_cache/*" \
-  -x "AI Trading Bot/clean_training_data/*" \
-  -x "AI Trading Bot/logs/*" \
-  -x "AI Trading Bot/oss_audit_logs/*" \
-  -x "*.log" >/dev/null
+# 1. Engine + models archive (tar, no compression: weights barely compress) --------
+echo "=== [1/5] archiving engine + models (the long part) ==="
+ENGINE_TAR="$DIST/aaagents-engine.tar"
+tar -cf "$ENGINE_TAR" -C "$SRC_ENGINE_PARENT" \
+  --warning=no-file-changed --warning=no-file-removed \
+  --exclude='.git' --exclude='.venv' --exclude='.venv-fresh' --exclude='venv' \
+  --exclude='node_modules' --exclude='__pycache__' \
+  --exclude='*.pyc' --exclude='*.log' --exclude='*.pem' --exclude='*.key' \
+  --exclude='.env' --exclude='.env.*' \
+  --exclude='AI Trading Bot/data/training' \
+  --exclude='AI Trading Bot/data/*.parquet' \
+  --exclude='AI Trading Bot/data/*.db' \
+  --exclude='AI Trading Bot/data/*.db-wal' --exclude='AI Trading Bot/data/*.db-shm' \
+  --exclude='AI Trading Bot/data/audit_chain.jsonl' \
+  --exclude='AI Trading Bot/cloud_fallback_logs' \
+  --exclude='AI Trading Bot/lightning_logs' \
+  --exclude='AI Trading Bot/market_data_cache' \
+  --exclude='AI Trading Bot/clean_training_data' \
+  --exclude='AI Trading Bot/logs' \
+  --exclude='AI Trading Bot/oss_audit_logs' \
+  "AI Trading Bot"
 
-# 2. SECRET-LEAK GATE — abort if anything secret-like is in the archive ------------
+# 2. SECRET-LEAK GATE — abort if any secret-bearing file is in the archive ---------
 echo "=== [2/5] secret-leak gate ==="
-# Match actual secret-bearing files only (NOT source named *secret*, e.g. secret_manager_utils.py).
-if unzip -l "$ENGINE_ZIP" \
-   | grep -iE '/\.env(\.|$)|/[^/ ]*\.env$|\.pem$|\.key$|\.p12$|\.pfx$|/id_rsa$|/credentials\.json$|/service[_-]account[^/]*\.json$|/secrets?\.(json|ya?ml)$|/[^/]*_secret\.(json|txt|ya?ml)$' \
+if tar -tf "$ENGINE_TAR" \
+   | grep -iE '(^|/)\.env(\.|$)|/[^/ ]*\.env$|\.pem$|\.key$|\.p12$|\.pfx$|/id_rsa$|/credentials\.json$|/service[_-]account[^/]*\.json$|/secrets?\.(json|ya?ml)$|/[^/]*_secret\.(json|txt|ya?ml)$' \
    | grep -vE '\.example$' ; then
-  echo "ABORT: secret-bearing file found in engine zip (see above)."; exit 1
+  echo "ABORT: secret-bearing file found in engine archive (see above)."; exit 1
 fi
 echo "ok: no secrets in engine archive"
 
-# 3. GUI zip ----------------------------------------------------------------------
-echo "=== [3/5] zipping GUI (win-unpacked) ==="
-GUI_ZIP="$DIST/aaagents-gui.zip"
-( cd "$SRC_GUI_PARENT" && zip -r -1 "$GUI_ZIP" "win-unpacked" >/dev/null )
+# 3. GUI archive ------------------------------------------------------------------
+echo "=== [3/5] archiving GUI (win-unpacked) ==="
+GUI_TAR="$DIST/aaagents-gui.tar"
+tar -cf "$GUI_TAR" -C "$SRC_GUI_PARENT" "win-unpacked"
 
-# 4. Split engine zip into < 2 GB parts (bootstrap rejoins via copy /b) ------------
+# 4. Split + checksums ------------------------------------------------------------
 echo "=== [4/5] splitting + checksums ==="
-ESIZE=$(stat -c%s "$ENGINE_ZIP")
-echo "  hashing full engine zip ($((ESIZE/1024/1024)) MB) ..."
-FULLHASH=$(sha256sum "$ENGINE_ZIP" | awk '{print $1}')
+ESIZE=$(stat -c%s "$ENGINE_TAR")
+echo "  hashing full engine tar ($((ESIZE/1024/1024)) MB) ..."
+FULLHASH=$(sha256sum "$ENGINE_TAR" | awk '{print $1}')
 cd "$DIST"
 if [ "$ESIZE" -gt "$PART_BYTES" ]; then
-  split -b "$PART_BYTES" -d -a 2 "$ENGINE_ZIP" "aaagents-engine.zip.part-"
-  rm -f "$ENGINE_ZIP"
-  { sha256sum aaagents-engine.zip.part-* aaagents-gui.zip; echo "$FULLHASH  aaagents-engine.zip"; } > SHA256SUMS.txt
-  UP=(aaagents-engine.zip.part-* aaagents-gui.zip SHA256SUMS.txt)
+  split -b "$PART_BYTES" -d -a 2 "$ENGINE_TAR" "aaagents-engine.tar.part-"
+  rm -f "$ENGINE_TAR"
+  { sha256sum aaagents-engine.tar.part-* aaagents-gui.tar; echo "$FULLHASH  aaagents-engine.tar"; } > SHA256SUMS.txt
+  UP=(aaagents-engine.tar.part-* aaagents-gui.tar SHA256SUMS.txt)
 else
-  sha256sum aaagents-engine.zip aaagents-gui.zip > SHA256SUMS.txt
-  UP=(aaagents-engine.zip aaagents-gui.zip SHA256SUMS.txt)
+  sha256sum aaagents-engine.tar aaagents-gui.tar > SHA256SUMS.txt
+  UP=(aaagents-engine.tar aaagents-gui.tar SHA256SUMS.txt)
 fi
 ls -lh "${UP[@]}"
 
-# 5. Create + upload the release --------------------------------------------------
+# 5. Create + upload --------------------------------------------------------------
 echo "=== [5/5] uploading release $TAG to $REPO ==="
 unset GH_TOKEN
 if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
-  # Clear stale engine-part assets first (the part count can shrink between builds,
-  # which would otherwise leave an orphan part that corrupts the rejoin).
-  for a in $(gh release view "$TAG" -R "$REPO" --json assets -q '.assets[].name' 2>/dev/null | grep -E '^aaagents-engine\.zip'); do
+  # Clear stale engine assets first (part count can shrink between builds).
+  for a in $(gh release view "$TAG" -R "$REPO" --json assets -q '.assets[].name' 2>/dev/null | grep -E '^aaagents-engine\.(tar|zip)'); do
     echo "  removing stale asset: $a"; gh release delete-asset "$TAG" "$a" -R "$REPO" -y 2>/dev/null || true
   done
 else

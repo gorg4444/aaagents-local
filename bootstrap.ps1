@@ -77,8 +77,8 @@ if (Test-Path $app) { Remove-Item -Recurse -Force $app }
 New-Item -ItemType Directory -Force -Path $app | Out-Null
 
 # Join any split engine parts (part-00, part-01, ...) back into one zip, in order.
-$parts = Get-ChildItem $dl -Filter "aaagents-engine.zip.part-*" | Sort-Object Name
-$engineZip = Join-Path $dl "aaagents-engine.zip"
+$parts = Get-ChildItem $dl -Filter "aaagents-engine.tar.part-*" | Sort-Object Name
+$engineZip = Join-Path $dl "aaagents-engine.tar"
 if ($parts) {
   Remove-Item $engineZip -ErrorAction SilentlyContinue
   Info "Reassembling $($parts.Count) engine parts ..."
@@ -88,12 +88,12 @@ if (-not (Test-Path $engineZip)) { Die "Engine archive missing after reassembly.
 
 # Verify the reassembled archive against the full-zip hash in the manifest.
 if (Test-Path $manifest) {
-  $full = Get-Content $manifest | Where-Object { $_ -match 'aaagents-engine\.zip\s*$' } | Select-Object -First 1
+  $full = Get-Content $manifest | Where-Object { $_ -match 'aaagents-engine\.tar\s*$' } | Select-Object -First 1
   if ($full -and $full -match '^\s*([0-9a-fA-F]{64})') {
     $want = $matches[1].ToLower()
     Info "Verifying reassembled engine archive ..."
     if ((Get-FileHash $engineZip -Algorithm SHA256).Hash.ToLower() -ne $want) {
-      Die "Reassembled engine.zip checksum mismatch - re-run to re-download."
+      Die "Reassembled engine.tar checksum mismatch - re-run to re-download."
     }
     Ok "engine archive verified"
   }
@@ -107,7 +107,7 @@ if (-not (Test-Path $tar)) { $tar = "tar" }
 Info "Extracting engine + models (~6 GB - takes a minute) ..."
 & $tar -xf "$engineZip" -C "$app"
 if ($LASTEXITCODE -ne 0) { Die "Extraction failed (need Windows 10/11 in-box tar.exe at System32)." }
-$guiZip = Join-Path $dl "aaagents-gui.zip"
+$guiZip = Join-Path $dl "aaagents-gui.tar"
 if (Test-Path $guiZip) {
   $guiDir = Join-Path $app "gui"
   New-Item -ItemType Directory -Force -Path $guiDir | Out-Null

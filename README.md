@@ -32,8 +32,8 @@ the no-Docker engine and walks you through entering your Alpaca **paper** keys.
 
 | Asset | Contents |
 |---|---|
-| `aaagents-engine.zip.part-*` | the engine **with the trained models** (`core/ml/models`), split into < 2 GB parts |
-| `aaagents-gui.zip` | the packaged desktop app (Electron) |
+| `aaagents-engine.tar.part-*` | the engine **with the trained models** (`core/ml/models`), split into < 2 GB parts |
+| `aaagents-gui.tar` | the packaged desktop app (Electron) |
 | `SHA256SUMS.txt` | checksums (verified by the bootstrap) |
 
 Excluded from the bundle: secrets (`.env`), runtime DBs/logs, training data, venvs.
