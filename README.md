@@ -11,11 +11,13 @@ On the target PC, install [GitHub CLI](https://cli.github.com) once and run
 `gh auth login`, then:
 
 ```powershell
-& ([scriptblock]::Create((gh api -H "Accept: application/vnd.github.raw" /repos/gorg4444/aaagents-local/contents/bootstrap.ps1)))
+gh repo clone gorg4444/aaagents-local "$env:TEMP\aaa"; powershell -ExecutionPolicy Bypass -File "$env:TEMP\aaa\bootstrap.ps1"
 ```
 
-(or clone + run: `gh repo clone gorg4444/aaagents-local`, then
-`powershell -ExecutionPolicy Bypass -File .\aaagents-local\bootstrap.ps1`)
+Paste it as a **single line**. Re-running after a failed attempt? Prefix with
+`Remove-Item "$env:TEMP\aaa" -Recurse -Force -EA SilentlyContinue; ` to clear the old clone.
+The signed-in `gh` account must be able to read this private repo (i.e. `gorg4444`,
+or an account added as a collaborator).
 
 It downloads the release (~6 GB), reassembles + extracts it, sets up a Python
 venv with `requirements.oss.txt`, and **launches the desktop app** — which spawns
