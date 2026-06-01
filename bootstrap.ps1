@@ -49,11 +49,19 @@ try { $rel = Invoke-RestMethod -TimeoutSec 30 "https://api.github.com/repos/$Rep
 catch { Die "Could not read release '$Tag' from $Repo (is the repo public and the release published?)." }
 if (-not $rel.assets) { Die "Release '$Tag' has no assets." }
 Info "Downloading $($rel.assets.Count) assets (~7 GB; resumable - safe to re-run) ..."
+$dlFull = [System.IO.Path]::GetFullPath($dl)
 foreach ($a in $rel.assets) {
-  $out = Join-Path $dl $a.name
-  Info ("  {0} ({1} MB)" -f $a.name, [int]($a.size / 1MB))
+  # Harden against a crafted asset name (path traversal): force a bare filename
+  # and confirm the resolved path stays inside the download dir before writing.
+  $safe = [System.IO.Path]::GetFileName($a.name)
+  if ([string]::IsNullOrWhiteSpace($safe) -or $safe -match '[\\/]') { Die "Invalid asset name: $($a.name)" }
+  $out = Join-Path $dl $safe
+  if (-not ([System.IO.Path]::GetFullPath($out)).StartsWith($dlFull + [System.IO.Path]::DirectorySeparatorChar)) {
+    Die "Asset path escapes the download directory: $($a.name)"
+  }
+  Info ("  {0} ({1} MB)" -f $safe, [int]($a.size / 1MB))
   & $curl -L --fail --retry 5 --retry-delay 3 -C - -o "$out" $a.browser_download_url
-  if ($LASTEXITCODE -ne 0) { Die "Download failed for $($a.name) - re-run to resume." }
+  if ($LASTEXITCODE -ne 0) { Die "Download failed for $safe - re-run to resume." }
 }
 Ok "assets downloaded to $dl"
 
