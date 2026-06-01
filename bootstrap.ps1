@@ -122,25 +122,39 @@ if (-not (Test-Path (Join-Path $botDir "requirements.oss.txt"))) {
 }
 $venv = Join-Path $InstallDir "venv"
 $vpy  = Join-Path $venv "Scripts\python.exe"
-if (-not (Test-Path $vpy)) { Info "Creating venv ..."; & python -m venv $venv }
-Info "Installing dependencies (requirements.oss.txt) - a few minutes ..."
-& $vpy -m pip install --upgrade pip | Out-Null
-& $vpy -m pip install -r (Join-Path $botDir "requirements.oss.txt")
-if ($LASTEXITCODE -ne 0) { Die "Dependency install failed (see output above)." }
-Ok "dependencies installed"
+$engineReady = $false
+if (Get-Command python -ErrorAction SilentlyContinue) {
+  if (-not (Test-Path $vpy)) { Info "Creating venv ..."; & python -m venv $venv }
+  if (Test-Path $vpy) {
+    Info "Installing dependencies (requirements.oss.txt) - a few minutes ..."
+    & $vpy -m pip install --upgrade pip | Out-Null
+    & $vpy -m pip install -r (Join-Path $botDir "requirements.oss.txt")
+    if ($LASTEXITCODE -eq 0) { Ok "dependencies installed"; $engineReady = $true }
+    else { Warn "Dependency install hit errors - the app still opens; the engine starts once resolved." }
+  }
+} else {
+  Warn "Python 3.12+ not found - the app still opens; install Python so the engine can start."
+}
 
 # 5. Launch the desktop GUI (it spawns the no-Docker engine) ----------------
+# The GUI opens regardless of engine readiness; it shows engine status in-app and
+# adopts the engine once it is running.
 $exe = Get-ChildItem (Join-Path $app "gui") -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue |
        Where-Object { $_.Name -notmatch "unins|crash|setup" } | Select-Object -First 1
-$env:AAA_PYTHON      = $vpy        # GUI spawns the engine with THIS interpreter (resolve-python.cjs)
-$env:AAA_SOURCE_ROOT = $app        # ... from <app>\AI Trading Bot (native-engine-manager.cjs)
+if (Test-Path $vpy) { $env:AAA_PYTHON = $vpy }  # GUI spawns the engine with THIS interpreter
+$env:AAA_SOURCE_ROOT = $app                      # ... from <app>\AI Trading Bot (native-engine-manager.cjs)
 $env:AAA_ENGINE_PORT = "$Port"
+$env:AAA_DEMO_BOOT   = "true"                     # dashboard boots before keys are set (paper, never trades)
 Ok "Setup complete."
 Write-Host ""
-Write-Host "  Engine + models + GUI installed to: $InstallDir" -ForegroundColor Green
-Write-Host "  On first run, enter your Alpaca PAPER keys in the app's onboarding." -ForegroundColor Green
+Write-Host "  Installed to: $InstallDir" -ForegroundColor Green
+if ($engineReady) {
+  Write-Host "  Opens in DEMO mode (dashboard, no trading); add your Alpaca PAPER keys in-app to go live." -ForegroundColor Green
+} else {
+  Write-Host "  The app will open; install Python 3.12+ then re-run to enable the engine." -ForegroundColor Yellow
+}
 if ($NoLaunch) { Info "Skipping launch (--NoLaunch). Start later: `"$($exe.FullName)`""; exit 0 }
-if (-not $exe) { Warn "GUI exe not found under $app\gui - start the engine headless: & '$vpy' -u -m core.engine (cwd $botDir)"; exit 0 }
+if (-not $exe) { Warn "GUI exe not found under $app\gui."; exit 0 }
 Info "Launching the desktop app ..."
 Start-Process -FilePath $exe.FullName
-Ok "AAAgents is starting. The app will bring up the engine on :$Port."
+Ok "AAAgents is starting in DEMO mode - the dashboard opens without keys; add Alpaca PAPER keys in-app to trade."
