@@ -1,17 +1,17 @@
 <#
-  AAAgents - one-command local install (private). Pulls the full engine + models +
-  desktop GUI from the private GitHub Release and launches the desktop app, which
-  spawns the no-Docker engine. Zero Docker.
+  AAAgents - one-command local install. Pulls the full engine + trained models +
+  desktop GUI from the PUBLIC GitHub Release and launches the desktop app, which
+  spawns the no-Docker engine. Zero Docker, no GitHub login.
 
-  Run on the target PC (gh must be installed + `gh auth login` done once):
+  Run on the target PC (PowerShell):
 
-      & ([scriptblock]::Create((gh api -H "Accept: application/vnd.github.raw" `
-          /repos/gorg4444/aaagents-local/contents/bootstrap.ps1)))
+      irm https://raw.githubusercontent.com/gorg4444/aaagents-local/main/bootstrap.ps1 | iex
 
-  Or clone + run:  gh repo clone gorg4444/aaagents-local; .\aaagents-local\bootstrap.ps1
+  Prereqs: an internet connection for the ~7 GB download. Python is BUNDLED.
+  Optional: Ollama (`ollama pull llama3.2`) for AI analysis, and your Alpaca PAPER
+  keys (entered in-app) to trade. The dashboard opens in demo mode without either.
 
-  Prereqs on the target PC: Python 3.12+, Ollama (`ollama pull llama3.2`), gh (authed),
-  and your Alpaca PAPER API keys (entered in-app on first run).
+  Apache-2.0. Copyright 2026 Georg Apeldorn (AAAgents).
 #>
 param(
   [string]$InstallDir = (Join-Path $env:LOCALAPPDATA "AAAgents"),
@@ -29,30 +29,32 @@ function Die($m){ Write-Host "[FAIL] $m" -ForegroundColor Red; exit 1 }
 Write-Host "AAAgents - desktop install (engine + models + GUI, zero Docker)" -ForegroundColor Green
 
 # 1. Prerequisites ----------------------------------------------------------
-if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-  Die "GitHub CLI (gh) is required. Install from https://cli.github.com then run 'gh auth login'."
-}
-& gh auth status *> $null
-if ($LASTEXITCODE -ne 0) { Die "gh is not authenticated. Run 'gh auth login' (your account that can read $Repo)." }
-Ok "gh authenticated"
-
-$py = Get-Command python -ErrorAction SilentlyContinue
-if (-not $py) { Die "Python 3.12+ is required on PATH (https://python.org)." }
-$pyver = (& python -c "import sys;print('%d.%d'%sys.version_info[:2])")
-Ok "python $pyver"
+# Public release: NO GitHub login needed; assets download anonymously via curl
+# (in-box on Windows 10/11). Python is bundled in the release.
+$curl = Join-Path $env:WINDIR "System32\curl.exe"
+if (-not (Test-Path $curl)) { $curl = "curl.exe" }
+if (-not (Get-Command $curl -ErrorAction SilentlyContinue)) { Die "curl is required (in-box on Windows 10/11)." }
 
 try {
   $tags = (Invoke-RestMethod -TimeoutSec 4 "http://127.0.0.1:11434/api/tags").models.name -join ", "
   if ($tags -match "llama3.2") { Ok "Ollama running (llama3.2 present)" }
   else { Warn "Ollama running but llama3.2 not found - run: ollama pull llama3.2" }
-} catch { Warn "Ollama not reachable - install from https://ollama.com, then: ollama serve; ollama pull llama3.2" }
+} catch { Warn "Ollama not reachable (optional) - install https://ollama.com then: ollama pull llama3.2" }
 
-# 2. Download the release assets -------------------------------------------
+# 2. Download the release assets (anonymous; public repo) -------------------
 $dl = Join-Path $InstallDir "dl"
 New-Item -ItemType Directory -Force -Path $dl | Out-Null
-Info "Downloading release $Tag from $Repo (this is large - ~6 GB; do not interrupt) ..."
-& gh release download $Tag -R $Repo -D $dl --clobber
-if ($LASTEXITCODE -ne 0) { Die "Release download failed. Confirm the release '$Tag' exists and you can read $Repo." }
+Info "Fetching release $Tag asset list ..."
+try { $rel = Invoke-RestMethod -TimeoutSec 30 "https://api.github.com/repos/$Repo/releases/tags/$Tag" }
+catch { Die "Could not read release '$Tag' from $Repo (is the repo public and the release published?)." }
+if (-not $rel.assets) { Die "Release '$Tag' has no assets." }
+Info "Downloading $($rel.assets.Count) assets (~7 GB; resumable - safe to re-run) ..."
+foreach ($a in $rel.assets) {
+  $out = Join-Path $dl $a.name
+  Info ("  {0} ({1} MB)" -f $a.name, [int]($a.size / 1MB))
+  & $curl -L --fail --retry 5 --retry-delay 3 -C - -o "$out" $a.browser_download_url
+  if ($LASTEXITCODE -ne 0) { Die "Download failed for $($a.name) - re-run to resume." }
+}
 Ok "assets downloaded to $dl"
 
 # 3. Verify + reassemble split parts ---------------------------------------

@@ -1,0 +1,20 @@
+AAAgents
+Copyright 2026 Georg Apeldorn (AAAgents)
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This distribution bundles third-party components, each retaining its own license.
+Non-exhaustive list:
+  - PyTorch, torchvision, torchaudio (BSD-3-Clause)
+  - LangGraph, langchain-core (MIT)
+  - FastAPI, Starlette, Uvicorn, Pydantic (MIT / BSD)
+  - SQLAlchemy, aiosqlite, alembic (MIT)
+  - scikit-learn, NumPy, SciPy, pandas, matplotlib (BSD)
+  - stable-baselines3, gymnasium (MIT)
+  - A relocatable CPython build via python-build-standalone (PSF, plus the
+    licenses of the components it ships)
+  - The desktop application shell is built on Electron (MIT) and Chromium (BSD).
+
+Each component's full license text is available in its own distribution. The
+trained model artifacts shipped in the release are provided as-is under the
+Apache License, Version 2.0, without warranty.
