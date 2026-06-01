@@ -1,0 +1,25 @@
+# Never commit the multi-GB payload — it ships as a GitHub Release, not in git.
+dist/
+app/
+dl/
+venv/
+.venv*/
+*.zip
+*.zip.part-*
+*.z0*
+*.tar
+*.tar.gz
+SHA256SUMS.txt
+
+# Secrets — never.
+.env
+.env.*
+*.key
+*.pem
+*secret*
+
+# Cruft.
+__pycache__/
+*.pyc
+node_modules/
+*.log
