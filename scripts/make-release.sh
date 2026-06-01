@@ -115,8 +115,7 @@ if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
     echo "  removing stale asset: $a"; gh release delete-asset "$TAG" "$a" -R "$REPO" -y 2>/dev/null || true
   done
 else
-  gh release create "$TAG" -R "$REPO" -t "AAAgents desktop $TAG" \
-    -n "Full no-Docker engine + trained models + desktop GUI (private). Run bootstrap.ps1."
+  gh release create "$TAG" -R "$REPO" -t "AAAgents desktop $TAG" -n "Full no-Docker engine + trained models + desktop GUI (public, Apache-2.0). Run bootstrap.ps1."
 fi
 gh release upload "$TAG" -R "$REPO" "${UP[@]}" --clobber
 echo "=== DONE: https://github.com/$REPO/releases/tag/$TAG ==="
