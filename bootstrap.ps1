@@ -128,6 +128,18 @@ if (-not (Test-Path $tar)) { $tar = "tar" }
 Info "Extracting engine + models (~6 GB - takes a minute) ..."
 & $tar -xf "$engineZip" -C "$app"
 if ($LASTEXITCODE -ne 0) { Die "Extraction failed (need Windows 10/11 in-box tar.exe at System32)." }
+# Apply the engine-patch overlay on top of the frozen engine.tar snapshot — the
+# latest engine fixes (e.g. the ML quality gate that revives per-symbol TFT
+# signal) ship as this small overlay, exactly as update.ps1 applies it. Without
+# this, a FRESH install would run the older snapshotted engine (ML stays dead).
+$patchTar = Join-Path $dl "aaagents-engine-patch.tar"
+$botDirX  = Join-Path $app "AI Trading Bot"
+if ((Test-Path $patchTar) -and (Test-Path $botDirX)) {
+  Info "Applying engine-patch (latest engine fixes) ..."
+  & $tar -xf "$patchTar" -C "$botDirX"
+  if ($LASTEXITCODE -ne 0) { Warn "engine-patch apply failed - running base engine snapshot." }
+  else { Ok "engine-patch applied" }
+}
 $guiZip = Join-Path $dl "aaagents-gui.tar"
 if (Test-Path $guiZip) {
   $guiDir = Join-Path $app "gui"
