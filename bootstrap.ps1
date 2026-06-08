@@ -60,11 +60,15 @@ foreach ($a in $rel.assets) {
     Die "Asset path escapes the download directory: $($a.name)"
   }
   Info ("  {0} ({1} MB)" -f $safe, [int]($a.size / 1MB))
-  # Skip assets already fully downloaded. Without this, a re-run hits a COMPLETE
-  # file (e.g. the small engine-patch), curl tries to resume from EOF and GitHub
-  # returns 504/416 -> the whole bootstrap aborts before reaching the unfinished
-  # files, so re-running never makes progress. Size match = done -> skip.
-  if ((Test-Path $out) -and ($a.size -gt 0) -and ((Get-Item $out).Length -ge $a.size)) {
+  # Skip BIG assets already fully downloaded. Without this, a re-run hits a
+  # COMPLETE file (e.g. the small engine-patch), curl tries to resume from EOF and
+  # GitHub returns 504/416 -> the whole bootstrap aborts before reaching the
+  # unfinished files, so re-running never makes progress. Size match = done -> skip.
+  # EXCEPTION: always re-fetch the tiny text assets (SHA256SUMS.txt + *.ps1) so a
+  # re-run always carries the CURRENT manifest/scripts even when a release asset
+  # was REPLACED in place — a same-size swap that this size check cannot detect.
+  $isSmallText = $safe -match '\.(ps1|txt)$'
+  if (-not $isSmallText -and (Test-Path $out) -and ($a.size -gt 0) -and ((Get-Item $out).Length -ge $a.size)) {
     Ok ("  already complete: {0}" -f $safe); continue
   }
   # -C - resumes partials. --retry-all-errors + a long backoff (and no overall
@@ -86,7 +90,22 @@ if (Test-Path $manifest) {
       $f = Join-Path $dl $name
       if (Test-Path $f) {
         $got = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
-        if ($got -ne $want) { Die "Checksum mismatch for $name - re-download." }
+        if ($got -ne $want) {
+          # A cached asset that no longer matches the manifest — almost always a
+          # file that was REPLACED in the release after a previous download (the
+          # size-based skip above can't see a same-size swap). Self-heal: delete
+          # the stale copy, re-download the current one, and re-verify, so a plain
+          # re-run recovers without the user hand-deleting anything.
+          Warn "  $name is stale (checksum mismatch) - re-downloading the current copy ..."
+          Remove-Item $f -Force -ErrorAction SilentlyContinue
+          $asset = $rel.assets | Where-Object { [System.IO.Path]::GetFileName($_.name) -eq $name } | Select-Object -First 1
+          if (-not $asset) { Die "Checksum mismatch for $name and it is not in release $Tag - re-run." }
+          & $curl -L --fail --retry 15 --retry-all-errors --retry-delay 5 --connect-timeout 30 --retry-max-time 0 -C - -o "$f" $asset.browser_download_url
+          if ($LASTEXITCODE -ne 0) { Die "Re-download of $name failed (GitHub 504) - just re-run the same command." }
+          $got = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
+          if ($got -ne $want) { Die "Checksum still wrong for $name after re-download - re-run." }
+          Ok "  $name re-downloaded and verified"
+        }
       }
     }
   }
