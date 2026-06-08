@@ -60,8 +60,19 @@ foreach ($a in $rel.assets) {
     Die "Asset path escapes the download directory: $($a.name)"
   }
   Info ("  {0} ({1} MB)" -f $safe, [int]($a.size / 1MB))
-  & $curl -L --fail --retry 5 --retry-delay 3 -C - -o "$out" $a.browser_download_url
-  if ($LASTEXITCODE -ne 0) { Die "Download failed for $safe - re-run to resume." }
+  # Skip assets already fully downloaded. Without this, a re-run hits a COMPLETE
+  # file (e.g. the small engine-patch), curl tries to resume from EOF and GitHub
+  # returns 504/416 -> the whole bootstrap aborts before reaching the unfinished
+  # files, so re-running never makes progress. Size match = done -> skip.
+  if ((Test-Path $out) -and ($a.size -gt 0) -and ((Get-Item $out).Length -ge $a.size)) {
+    Ok ("  already complete: {0}" -f $safe); continue
+  }
+  # -C - resumes partials. --retry-all-errors + a long backoff (and no overall
+  # cap) ride out GitHub CDN 504 gateway-timeouts on the multi-GB parts/ollama.
+  & $curl -L --fail --retry 15 --retry-all-errors --retry-delay 5 --connect-timeout 30 --retry-max-time 0 -C - -o "$out" $a.browser_download_url
+  if ($LASTEXITCODE -ne 0) {
+    Die "Download stalled on $safe (GitHub 504). Just re-run the same command - finished files are skipped and this one resumes where it left off."
+  }
 }
 Ok "assets downloaded to $dl"
 
@@ -123,6 +134,13 @@ if (Test-Path $guiZip) {
   New-Item -ItemType Directory -Force -Path $guiDir | Out-Null
   & $tar -xf "$guiZip" -C "$guiDir"
 }
+# Bundled Ollama (local LLM + llama3.2) — extract to <InstallDir>\ollama. The GUI
+# auto-starts it (no system Ollama needed). Shipped as a single ~2 GB asset.
+$ollTar = Join-Path $dl "aaagents-ollama.tar"
+if (Test-Path $ollTar) {
+  if (Test-Path (Join-Path $InstallDir "ollama\ollama.exe")) { Info "Bundled Ollama already present - skipping." }
+  else { Info "Extracting bundled Ollama (local LLM) ..."; & $tar -xf "$ollTar" -C $InstallDir }
+}
 Ok "extracted to $app"
 
 # 4. Python venv + dependencies --------------------------------------------
@@ -148,6 +166,16 @@ if (Test-Path $pyTar) {
   & $tar -xf "$pyTar" -C $InstallDir
   $cand = Join-Path $InstallDir "python\python.exe"
   if (Test-Path $cand) { $vpy = $cand; $engineReady = $true; Ok "bundled Python ready (deps included)" }
+  # ML inference deps overlay (pytorch_forecasting + lightning + torchmetrics +
+  # pyarrow): the bundled Python ships torch but not these, so the per-symbol TFT
+  # models need this overlay to load. Extract into site-packages if not present.
+  $mlTar = Join-Path $dl "aaagents-ml-deps.tar"
+  $pfDir = Join-Path $InstallDir "python\Lib\site-packages\pytorch_forecasting"
+  if ((Test-Path $mlTar) -and -not (Test-Path $pfDir)) {
+    Info "Installing ML inference deps (per-symbol quant models) ..."
+    & $tar -xf "$mlTar" -C $InstallDir
+    Ok "ML inference deps installed"
+  }
 }
 
 # 4b. Fallback: system Python + venv (only if no bundled Python shipped).
@@ -177,6 +205,14 @@ if ($vpy -and (Test-Path $vpy)) { $env:AAA_PYTHON = $vpy }  # GUI spawns the eng
 $env:AAA_SOURCE_ROOT = $app                      # ... from <app>\AI Trading Bot (native-engine-manager.cjs)
 $env:AAA_ENGINE_PORT = "$Port"
 $env:AAA_DEMO_BOOT   = "true"                     # dashboard boots before keys are set (paper, never trades)
+# No-Docker local env — the GUI inherits these and passes them to the engine, so
+# shadow_boot skips Redis (REDIS_DISABLED) and the DB uses SQLite (empty DATABASE_URL).
+# Without them the engine tries a real Postgres/Redis and shadow_boot aborts.
+$env:DATABASE_URL    = ""                         # empty -> SQLite (aiosqlite), no Postgres
+$env:REDIS_DISABLED  = "true"                     # -> in-memory state facade, no Redis
+$env:DEPLOYMENT_MODE = "LOCAL"
+$env:SECRET_BACKEND  = "keychain"                 # add Alpaca PAPER keys via the in-app keychain
+$env:PAPER_TRADING   = "true"
 Ok "Setup complete."
 Write-Host ""
 Write-Host "  Installed to: $InstallDir" -ForegroundColor Green
