@@ -242,6 +242,8 @@ $env:AAA_DEMO_BOOT   = "true"                     # dashboard boots before keys 
 $env:DATABASE_URL    = ""                         # empty -> SQLite (aiosqlite), no Postgres
 $env:REDIS_DISABLED  = "true"                     # -> in-memory state facade, no Redis
 $env:DEPLOYMENT_MODE = "LOCAL"
+$env:ENGINE_HOST     = "127.0.0.1"                # SEC: loopback-only; engine defaults to 0.0.0.0 (= LAN-exposed) otherwise
+$env:AAA_USER_DATA_DIR = (Join-Path $InstallDir "userdata")  # per-user account state OUT of the bundle (fresh install = clean; no dev trades/winrate)
 $env:SECRET_BACKEND  = "keychain"                 # add Alpaca PAPER keys via the in-app keychain
 $env:PAPER_TRADING   = "true"
 Ok "Setup complete."
